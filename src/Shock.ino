@@ -4,7 +4,6 @@
 #include "HTTP_Server.h"
 #include "StringComparator.h"
 #include "utility/debug.h"
-#include "IntParser.h"
 
 // These are the interrupt and control pins
 #define CC3000_IRQ   3  // MUST be an interrupt pin!
@@ -25,15 +24,49 @@ class My_HTTP_Client : public HTTP_Client
     friend class My_HTTP_Server;
     using HTTP_Client::HTTP_Client;
 private:
-    http_client_state old_state = http_client_state::DONE;
+    http_request_state old_state = http_request_state::DONE;
+
+    void reportError(http_status e) {
+        if (responseState() == http_response_state::VERSION) {
+            write(F("HTTP/1.0"));
+            advanceTo(http_response_state::STATUS_CODE);
+        }
+
+        if (responseState() == http_response_state::STATUS_CODE) {
+            switch (e) {
+                case http_status::FAIL_BAD_REQUEST:
+                    write(F("400"));
+                    break;
+                default:
+                    write(F("500"));
+                    break;
+            }
+            advanceTo(http_response_state::STATUS_REASON);
+        }
+
+        if (responseState() == http_response_state::STATUS_REASON) {
+            write(HTTPStatusToString(e));
+            advanceTo(http_response_state::HEADER_NAME);
+        }
+
+        if (responseState() == http_response_state::HEADER_NAME) {
+            write(F("Content-Length"));
+            advanceTo(http_response_state::HEADER_VALUE);
+        }
+
+        if (responseState() == http_response_state::HEADER_VALUE) {
+            write('0');
+            advanceTo(http_response_state::BODY);
+        }
+    }
 
 protected:
     virtual void process() override
     {
-        uint8_t buf[101];
-        std::size_t n_buf = 100;
+        uint8_t buf[65];
+        std::size_t n_buf = 64;
 
-        http_client_state state;
+        http_request_state state;
         http_status status = read(buf, &n_buf, &state);
 
         if (old_state != state) {
@@ -60,7 +93,41 @@ protected:
             break;
         default:
             Serial.println(HTTPStatusToString(status));
+            reportError(status);
             break;
+        }
+
+        if (http_status::OKAY == status) {
+            switch (state) {
+                case http_request_state::VERSION:
+                    switch (version()) {
+                        case http_version::HTTP_1_1:
+                            write(F("HTTP/1.1"));
+                            break;
+                        case http_version::HTTP_1_0:
+                        default:
+                            write(F("HTTP/1.0"));
+                            break;
+                    }
+                    advanceTo(http_response_state::STATUS_CODE);
+                    break;
+                case http_request_state::BODY:
+                    write(F("200"));
+                    advanceTo(http_response_state::STATUS_REASON);
+                    write(F("OK"));
+                    advanceTo(http_response_state::HEADER_NAME);
+                    write(F("Content-Length"));
+                    advanceTo(http_response_state::HEADER_VALUE);
+                    write(F("11"));
+                    advanceTo(http_response_state::HEADER_NAME);
+                    write(F("Connection"));
+                    advanceTo(http_response_state::HEADER_VALUE);
+                    write(F("close"));
+                    advanceTo(http_response_state::BODY);
+                    write(F("Hello World"));
+                    close();
+                    break;
+            }
         }
     }
 };

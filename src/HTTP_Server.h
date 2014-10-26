@@ -31,7 +31,7 @@ enum class http_status
     FAIL_UNSUPPORTED,
 };
 
-enum class http_client_state
+enum class http_request_state
 {
     METHOD,
     PATH,
@@ -41,6 +41,16 @@ enum class http_client_state
     HEADER_VALUE,
     BODY,
     DONE,
+};
+
+enum class http_response_state
+{
+    VERSION,
+    STATUS_CODE,
+    STATUS_REASON,
+    HEADER_NAME,
+    HEADER_VALUE,
+    BODY,
 };
 
 enum class http_version
@@ -57,7 +67,7 @@ enum class http_header
     CONTENT_LENGTH,
 };
 
-const __FlashStringHelper* HTTPClientStateToString(http_client_state state);
+const __FlashStringHelper* HTTPClientStateToString(http_request_state state);
 const __FlashStringHelper* HTTPStatusToString(http_status status);
 
 class HTTP_Client
@@ -65,10 +75,12 @@ class HTTP_Client
     friend class HTTP_Server;
 private:
     bool _connected = false;
+    Adafruit_CC3000_ClientRef _client = Adafruit_CC3000_ClientRef(NULL);
     RingBuffer<HTTP_BUFFER_SIZE> _buffer;
 
     // Tracks the state of the http request
-    http_client_state _state = http_client_state::METHOD;
+    http_request_state _requestState = http_request_state::METHOD;
+    http_response_state _responseState = http_response_state::VERSION;
 
     // Version information for the client
     static StringComparator _versionComparator;
@@ -91,20 +103,37 @@ private:
 
     void disconnect();
     void connect();
+    void client(Adafruit_CC3000_ClientRef c) { _client = c; }
 
-    void getTransition(uint8_t& terminator, http_client_state& next);
+    void getTransition(uint8_t& terminator, http_request_state& next);
     void processState(uint8_t* buf, size_t n_buf);
     http_status checkState();
 
-    void state(http_client_state s);
+    void requestState(http_request_state s);
+    void responseState(http_response_state s);
 
     http_status readTerminated(uint8_t* buf, size_t* n_buf);
     http_status readBody(uint8_t* buf, size_t* n_buf);
 
+    bool isValidResponseTransition(http_response_state s);
+
 protected:
     HTTP_Client() = default;
 
-    http_status read(uint8_t* buf, size_t* n_buf, http_client_state* current);
+    http_version version() const { return _version; }
+    http_response_state responseState() const { return _responseState; }
+    http_request_state requestState() const { return _requestState; }
+
+    http_status read(uint8_t* buf, size_t* n_buf, http_request_state* current);
+
+    size_t write(uint8_t* buf, size_t n);
+    size_t write(const char* str);
+    http_status write(uint8_t c);
+    size_t write(const __FlashStringHelper* str);
+
+    http_status advanceTo(http_response_state state);
+
+    http_status close();
 
     virtual void process() =0;
 

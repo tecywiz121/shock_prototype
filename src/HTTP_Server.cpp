@@ -19,24 +19,24 @@ static void http_log(const char *level, const __FlashStringHelper* msg)
 #define debug(x) do { ; } while (0)
 #endif
 
-const __FlashStringHelper* HTTPClientStateToString(http_client_state state)
+const __FlashStringHelper* HTTPClientStateToString(http_request_state state)
 {
     switch (state) {
-    case http_client_state::METHOD:
+    case http_request_state::METHOD:
         return F("METHOD");
-    case http_client_state::PATH:
+    case http_request_state::PATH:
         return F("PATH");
-    case http_client_state::VERSION:
+    case http_request_state::VERSION:
         return F("VERSION");
-    case http_client_state::BEFORE_HEADER:
+    case http_request_state::BEFORE_HEADER:
         return F("BEFORE_HEADER");
-    case http_client_state::HEADER_NAME:
+    case http_request_state::HEADER_NAME:
         return F("HEADER_NAME");
-    case http_client_state::HEADER_VALUE:
+    case http_request_state::HEADER_VALUE:
         return F("HEADER_VALUE");
-    case http_client_state::BODY:
+    case http_request_state::BODY:
         return F("BODY");
-    case http_client_state::DONE:
+    case http_request_state::DONE:
         return F("DONE");
     }
 }
@@ -96,7 +96,7 @@ void HTTP_Client::connect()
     _header = http_header::UNKNOWN;
     _contentLength = 0;
     _chunked = false;
-    state(http_client_state::METHOD);
+    requestState(http_request_state::METHOD);
 }
 
 void HTTP_Client::disconnect()
@@ -104,20 +104,20 @@ void HTTP_Client::disconnect()
     _connected = false;
 }
 
-void HTTP_Client::state(http_client_state s)
+void HTTP_Client::requestState(http_request_state s)
 {
-    if (s != _state) {
-        _state = s;
+    if (s != _requestState) {
+        _requestState = s;
         _intParser.reset();
 
-        switch (_state) {
-            case http_client_state::VERSION:
+        switch (_requestState) {
+            case http_request_state::VERSION:
                 _comparison = _versionComparator.create();
                 break;
-            case http_client_state::HEADER_NAME:
+            case http_request_state::HEADER_NAME:
                 _comparison = _headerComparator.create();
                 break;
-            case http_client_state::HEADER_VALUE:
+            case http_request_state::HEADER_VALUE:
                 if (http_header::TRANSFER_ENCODING == _header) {
                     _comparison = _transferEncodingComparator.create();
                 }
@@ -129,33 +129,33 @@ void HTTP_Client::state(http_client_state s)
     }
 }
 
-void HTTP_Client::getTransition(uint8_t& terminator, http_client_state& next)
+void HTTP_Client::getTransition(uint8_t& terminator, http_request_state& next)
 {
-    switch (_state) {
-        case http_client_state::METHOD:
+    switch (_requestState) {
+        case http_request_state::METHOD:
             terminator = ' ';
-            next = http_client_state::PATH;
+            next = http_request_state::PATH;
             break;
-        case http_client_state::PATH:
+        case http_request_state::PATH:
             terminator = ' ';
-            next = http_client_state::VERSION;
+            next = http_request_state::VERSION;
             break;
-        case http_client_state::VERSION:
+        case http_request_state::VERSION:
             terminator = '\n';
-            next = http_client_state::BEFORE_HEADER;
+            next = http_request_state::BEFORE_HEADER;
             break;
-        case http_client_state::HEADER_NAME:
+        case http_request_state::HEADER_NAME:
             terminator = ':';
-            next = http_client_state::HEADER_VALUE;
+            next = http_request_state::HEADER_VALUE;
             break;
-        case http_client_state::HEADER_VALUE:
+        case http_request_state::HEADER_VALUE:
             terminator = '\n';
-            next = http_client_state::BEFORE_HEADER;
+            next = http_request_state::BEFORE_HEADER;
             break;
-        case http_client_state::BODY:
+        case http_request_state::BODY:
             // TODO
             break;
-        case http_client_state::DONE:
+        case http_request_state::DONE:
             // TODO
             break;
         default:
@@ -165,7 +165,7 @@ void HTTP_Client::getTransition(uint8_t& terminator, http_client_state& next)
 }
 
 http_status HTTP_Client::read(uint8_t* buf, size_t* n_buf,
-        http_client_state* current)
+        http_request_state* current)
 {
     if (NULL == n_buf) {
         error("n_buf is null");
@@ -185,9 +185,9 @@ http_status HTTP_Client::read(uint8_t* buf, size_t* n_buf,
     int peeked;
 
     // Set the current state
-    *current = _state;
+    *current = _requestState;
 
-    if (http_client_state::BEFORE_HEADER == _state) {
+    if (http_request_state::BEFORE_HEADER == _requestState) {
         peeked = _buffer.peek();
         if (0 > peeked) {
             *n_buf = 0;
@@ -202,24 +202,24 @@ http_status HTTP_Client::read(uint8_t* buf, size_t* n_buf,
                 return http_status::INCOMPLETE;
             } else if ('\n' == peeked) {
                 _buffer.read();
-                state(http_client_state::BODY);
+                requestState(http_request_state::BODY);
             } else {
                 // Malformed request... Application can deal with extra '\r'
-                state(http_client_state::HEADER_NAME);
+                requestState(http_request_state::HEADER_NAME);
             }
         } else if ('\n' == peeked) {
             // Missing '\r', but got a new line, so... go to BODY
             _buffer.read();
-            state(http_client_state::BODY);
+            requestState(http_request_state::BODY);
         } else {
-            state(http_client_state::HEADER_NAME);
+            requestState(http_request_state::HEADER_NAME);
         }
     }
 
     // The state may have changed by here, so update it
-    *current = _state;
+    *current = _requestState;
 
-    if (http_client_state::BODY == _state) {
+    if (http_request_state::BODY == _requestState) {
         return readBody(buf, n_buf);
     } else {
         return readTerminated(buf, n_buf);
@@ -238,7 +238,7 @@ http_status HTTP_Client::readBody(uint8_t* buf, size_t* n_buf)
     _contentLength -= *n_buf;
 
     if (0 == _contentLength) {
-        state(http_client_state::DONE);
+        requestState(http_request_state::DONE);
         return http_status::OKAY;
     } else {
         return http_status::INCOMPLETE;
@@ -252,7 +252,7 @@ http_status HTTP_Client::readTerminated(uint8_t* buf, size_t* n_buf)
     // Get the terminator and the next state
     uint8_t terminator;
     bool transition = false;
-    http_client_state next;
+    http_request_state next;
     getTransition(terminator, next);
 
     // Read until we hit the terminator, or run out of buffer space
@@ -303,7 +303,7 @@ http_status HTTP_Client::readTerminated(uint8_t* buf, size_t* n_buf)
         }
 
         // Adavance the state
-        state(next);
+        requestState(next);
     }
 
     return retval;
@@ -317,11 +317,11 @@ void HTTP_Client::processState(uint8_t* buf, size_t n_buf)
 
     bool str = true;
 
-    switch (_state) {
-        case http_client_state::VERSION:
-        case http_client_state::HEADER_NAME:
+    switch (_requestState) {
+        case http_request_state::VERSION:
+        case http_request_state::HEADER_NAME:
             break;
-        case http_client_state::HEADER_VALUE:
+        case http_request_state::HEADER_VALUE:
             str = _header != http_header::CONTENT_LENGTH;
             break;
         default:
@@ -345,14 +345,14 @@ http_status HTTP_Client::checkState()
     size_t idx;
     if (!_comparison.hasMatch(idx)) {
         // No matching header/version/whatever...
-        switch (_state) {
-            case http_client_state::VERSION:
+        switch (_requestState) {
+            case http_request_state::VERSION:
                 _version = http_version::UNKNOWN;
                 break;
-            case http_client_state::HEADER_NAME:
+            case http_request_state::HEADER_NAME:
                 _header = http_header::UNKNOWN;
                 break;
-            case http_client_state::HEADER_VALUE:
+            case http_request_state::HEADER_VALUE:
                 if (http_header::TRANSFER_ENCODING == _header) {
                     error("got unknown transfer encoding");
                     return http_status::FAIL_UNSUPPORTED;
@@ -362,8 +362,8 @@ http_status HTTP_Client::checkState()
                 break;
         }
     } else {
-        switch (_state) {
-            case http_client_state::VERSION:
+        switch (_requestState) {
+            case http_request_state::VERSION:
                 switch (idx) {
                     case 0:
                         _version = http_version::HTTP_1_0;
@@ -378,7 +378,7 @@ http_status HTTP_Client::checkState()
                         return http_status::FAIL_INVALID_STATE;
                 }
                 break;
-            case http_client_state::HEADER_NAME:
+            case http_request_state::HEADER_NAME:
                 switch (idx) {
                     case 0:
                         _header = http_header::TRANSFER_ENCODING;
@@ -393,7 +393,7 @@ http_status HTTP_Client::checkState()
                         return http_status::FAIL_INVALID_STATE;
                 }
                 break;
-            case http_client_state::HEADER_VALUE:
+            case http_request_state::HEADER_VALUE:
                 if (http_header::TRANSFER_ENCODING == _header) {
                     switch (idx) {
                         case 0:
@@ -411,7 +411,7 @@ http_status HTTP_Client::checkState()
         }
     }
 
-    if (http_client_state::HEADER_VALUE == _state
+    if (http_request_state::HEADER_VALUE == _requestState
             && http_header::CONTENT_LENGTH == _header) {
         uintmax_t len;
         if (_intParser.value(&len)) {
@@ -427,6 +427,112 @@ http_status HTTP_Client::checkState()
             return http_status::FAIL_INVALID_STATE;
         }
     }
+    return http_status::OKAY;
+}
+
+http_status HTTP_Client::write(uint8_t c)
+{
+    if (1 != _client.write(c)) {
+        return http_status::FAIL_HARDWARE;
+    }
+
+    return http_status::OKAY;
+}
+
+size_t HTTP_Client::write(uint8_t* buf, size_t n)
+{
+    return _client.write(buf, n);
+}
+
+size_t HTTP_Client::write(const char* str)
+{
+    return _client.fastrprint(str);
+}
+
+size_t HTTP_Client::write(const __FlashStringHelper* str)
+{
+    return _client.fastrprint(str);
+}
+
+bool HTTP_Client::isValidResponseTransition(http_response_state state)
+{
+    // Check if it is a valid transition
+    bool allowed;
+    switch (_responseState) {
+        case http_response_state::VERSION:
+            allowed = http_response_state::STATUS_CODE == state;
+            break;
+        case http_response_state::STATUS_CODE:
+            allowed = http_response_state::STATUS_REASON == state;
+            break;
+        case http_response_state::STATUS_REASON:
+            allowed = http_response_state::HEADER_NAME == state
+                    || http_response_state::BODY == state;
+            break;
+        case http_response_state::HEADER_NAME:
+            allowed = http_response_state::HEADER_VALUE == state;
+            break;
+        case http_response_state::HEADER_VALUE:
+            allowed = http_response_state::HEADER_NAME == state
+                    || http_response_state::BODY == state;
+            break;
+        default:
+            allowed = false;
+            break;
+    }
+    return allowed;
+}
+
+http_status HTTP_Client::advanceTo(http_response_state state)
+{
+    if (_responseState == state) {
+        return http_status::OKAY;
+    }
+
+    if (!isValidResponseTransition(state)) {
+        error("invalid response transition");
+        return http_status::FAIL_INVALID_ARG;
+    }
+
+    static const __FlashStringHelper* const eol = F("\r\n");
+    static const __FlashStringHelper* const eoh = F(": ");
+    static const __FlashStringHelper* const body = F("\r\n\r\n");
+
+    http_status status;
+    switch (state) {
+        case http_response_state::HEADER_VALUE:
+            status = 2 == write(eoh) ? http_status::OKAY : http_status::FAIL_HARDWARE;
+            break;
+        case http_response_state::STATUS_REASON:
+        case http_response_state::STATUS_CODE:
+            status = write(' ');
+            break;
+        case http_response_state::BODY:
+            status = 4 == write(body) ? http_status::OKAY : http_status::FAIL_HARDWARE;
+            break;
+        case http_response_state::HEADER_NAME:
+            status = 2 == write(eol) ? http_status::OKAY : http_status::FAIL_HARDWARE;
+            break;
+        default:
+            status = http_status::OKAY;
+            break;
+    }
+
+    if (http_status::OKAY != status) {
+        return status;
+    }
+
+    _responseState = state;
+
+    return http_status::OKAY;
+}
+
+http_status HTTP_Client::close()
+{
+    debug("closing connection...");
+    delay(100);
+    _client.close();
+    debug("closed.");
     return http_status::OKAY;
 }
 
@@ -524,6 +630,7 @@ http_status HTTP_Server::tick()
     for (size_t ii = 0; ii < MAX_SERVER_CLIENTS; ii++) {
         HTTP_Client& httpClient = client(ii);
         if (httpClient.connected()) {
+            httpClient.client(_server.getClientRef(ii));
             httpClient.process();
         }
     }
